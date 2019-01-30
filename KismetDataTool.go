@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 )
@@ -32,7 +30,7 @@ func init() {
 		passwordUsage = "The password to authenticate to Kismet with"
 
 		urlDefault = "http://127.0.0.1:2501"
-		debugDefault = true
+		debugDefault = false
 	)
 
 	flag.StringVar(&kismetUrl, "url", urlDefault, urlUsage)
@@ -49,11 +47,18 @@ func main() {
 	flag.Parse()
 	if help {
 		flag.PrintDefaults()
-		os.Exit(0)
+		return
 	}
 
 	if debug {
 		dlog = log.New(os.Stderr, "DEBUG: ", log.Ltime)
+	} else {
+		if writer, err := os.Open(os.DevNull) ; err == nil {
+			dlog = log.New(writer, "", 0)
+		} else {
+			ilog.Println("Critical logging failure: Can't create null output for debug output")
+			return
+		}
 	}
 
 	/*
@@ -63,7 +68,7 @@ func main() {
 	if kismetUsername == "" || kismetPassword == "" {
 		flag.PrintDefaults()
 		ilog.Println("You must specify a username and password!")
-		os.Exit(1)
+		return
 	}
 
 	ilog.Println("Testing connectivity to Kismet instance at", kismetUrl)
@@ -78,8 +83,8 @@ func main() {
 
 	if newRequest, err := http.NewRequest("GET", kismetUrl + "/session/check_login", strings.NewReader("")) ; err != nil {
 		dlog.Printf("Failed to create connection. Request: %v\nError: %v\n", newRequest, err)
-		ilog.Println("Failed to establish Kismet connection\nExiting..")
-		os.Exit(1)
+		ilog.Println("Failed to establish Kismet connection")
+		return
 	} else {
 		request = newRequest
 	}
@@ -88,17 +93,21 @@ func main() {
 
 	if newResponse, err := httpClient.Do(request) ; err != nil {
 		dlog.Printf("Failed to finalize auth request. Response: %v\nError: %v\n", newResponse, err)
-		ilog.Println("Failed to establish Kismet connection\nExiting..")
-		os.Exit(1)
+		ilog.Println("Failed to establish Kismet connection")
+		return
 	} else {
+		ilog.Println("Connected to Kismet")
 		response = newResponse
+	} // Done with request
+	request.Body.Close()
+
+	if response.StatusCode != 200 {
+		ilog.Println("Failed to authenticate to Kismet")
+		return
+	} else {
+		ilog.Println("Authenticated to Kismet")
 	}
 
-	// Better safe than sorry
-	request.Body.Close()
-	response.Body.Close()
-
-	dlog.Printf("Good Response: %v\n", response)
 	dlog.Println("Cookies:")
 
 	// Looking for KISMET auth cookie
@@ -108,40 +117,75 @@ func main() {
 			dlog.Println("Found KISMET auth cookie")
 			kismetCookie = *cookie
 		}
-	}
+	} // Done with response
+	response.Body.Close()
 
 	if kismetCookie.Name != "KISMET" {
 		dlog.Println("Failed to find KISMET auth cookie")
-		ilog.Println("Failed to connect to Kismet\nExiting..")
-		os.Exit(0)
+		ilog.Println("Failed to connect to Kismet")
+		return
+	}
+
+	ilog.Println("Testing KISMET cookie")
+
+	if newRequest, err := http.NewRequest("GET", kismetUrl + "/session/check_session", strings.NewReader("")); err != nil {
+		dlog.Printf("Failed to create connection. Request: %v\nError: %v\n", newRequest, err)
+		ilog.Println("Failed to establish Kismet connection")
+		return
 	} else {
-		ilog.Println("Connected to Kismet")
+		request = newRequest
 	}
 
-	return
+	request.AddCookie(&kismetCookie)
 
-	// Nothing below here will run for now
+	if newResponse, err := httpClient.Do(request) ; err != nil {
+		dlog.Printf("Failed to finalize auth request. Response: %v\nError: %v\n", newResponse, err)
+		ilog.Println("Failed to establish Kismet connection")
+		return
+	} else {
+		response = newResponse
+	} // Done with Request
+	request.Body.Close()
 
-	stringBuilder := strings.Builder{}
-	jsonEncoder := json.NewEncoder(&stringBuilder)
+	if response.StatusCode != 200 {
+		ilog.Println("Validation of KISMET cookie failed!")
+		return
+	} else {
+		ilog.Println("Validated KISMET cookie")
+	} // Done with response
+	response.Body.Close()
 
-	if err := jsonEncoder.Encode(map[string][]string {
-		"fields": {"kismet.device.base.macaddr","kismet.device.base.phyname",},
-	}) ; err != nil {
-		ilog.Println("Failed to encode json payload")
-		os.Exit(1)
+	ilog.Println("Attempting to get Device data")
+
+	if newRequest, err := http.NewRequest("GET", kismetUrl + "/devices/all_devices.ekjson", strings.NewReader("")) ; err != nil {
+		dlog.Println("Failed to create request for devices")
+		ilog.Println("Failed to connect to kismet")
+		return
+	} else {
+		request = newRequest
 	}
 
-	values := url.Values{}
-	values.Add("json", stringBuilder.String())
-	dlog.Printf("POST PAYLOAD:\njson=%s\n", values.Get("json"))
+	// Customize request
+	request.AddCookie(&kismetCookie)
 
-	if response, err := http.PostForm(kismetUrl+ "/devices/all_devices.ekjson", values) ; err == nil {
-		//dlog.Printf("Got Response: %d, using protocol: %s", response.StatusCode, response.Proto)
+	if newResponse, err := httpClient.Do(request) ; err != nil {
+		ilog.Println("Failed to connect to kismet")
+		return
+	} else {
+		response = newResponse
+	} // Done with request
+	request.Body.Close()
+
+	if response.StatusCode != 200 {
+		ilog.Println("Failed to get device data!")
+		dlog.Printf("Request: %v\n", request)
 		dlog.Printf("Response: %v\n", response)
-		io.Copy(os.Stdout, response.Body)
+		return
 	} else {
-		ilog.Printf("Failed to connect to %v :(\nExiting", kismetUrl)
-		os.Exit(1)
-	}
+		ilog.Println("Devices: ")
+		if file, err := os.Create("log.txt") ; err == nil {
+			io.Copy(file, response.Body)
+		}
+	} // Done with response
+	response.Body.Close()
 }
