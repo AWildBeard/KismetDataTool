@@ -3,6 +3,7 @@ package main
 import (
 	"KismetDataTool/kismetClient"
 	"flag"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -112,6 +113,13 @@ func main() {
 	}
 
 	// TODO: Remove. Here just to test
-	dlog.Println("Testing KismetClient for redudancy.")
-	dlog.Println("We have a valid connection:", kClient.ValidConnection())
+	dlog.Println("Auth cookie:", kClient.GetCookie())
+	dlog.Println("Lets get some data!")
+
+	if reader := kClient.GetDevicesByFilter([]string {"kismet.device.base.macaddr","kismet.device.base.phyname",}) ; reader != nil {
+		// Going to use ioutil.ReadAll() to read the output pipe into a byte slice
+		io.Copy(os.Stdout, reader)
+		reader.Close()
+	}
+	ilog.Println()
 }

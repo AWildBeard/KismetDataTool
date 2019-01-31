@@ -1,8 +1,12 @@
 package kismetClient
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -18,6 +22,11 @@ func (err KismetRequestError) Error() string {
 	return string(err)
 }
 
+var (
+	httpClient http.Client
+	request *http.Request
+)
+
 const (
 	authPath = "/session/check_login"
 	authCheckPath = "/session/check_session"
@@ -25,13 +34,58 @@ const (
 	kismetAuthCookieName = "KISMET"
 )
 
+// Returns
+func (client *KismetWebClient) GetDevicesByFilter(filters []string) *io.PipeReader {
+	var (
+		jsonReader io.Reader
+		jsonObj = map[string][]string{
+			"fields": filters,
+		}
+		jsonLen int
+	)
+
+	if jsonBytes, err := json.Marshal(jsonObj); err == nil {
+		// Success!
+
+		jsonLen = len(jsonBytes) + 5 // json=
+		jsonReader = io.MultiReader(strings.NewReader("json="), bytes.NewReader(jsonBytes))
+	} else {
+		return nil
+	}
+
+	if newRequest, err := http.NewRequest("POST", client.url + customQueryPath, jsonReader) ; err == nil {
+		// Success
+		request = newRequest
+	} else {
+		return nil
+	}
+
+	request.AddCookie(&client.authCookie)
+	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Add("Charset", "utf-8")
+	request.Header.Add("Content-Length", strconv.Itoa(jsonLen))
+
+	if newResponse, err := httpClient.Do(request) ; err == nil {
+		reader, writer := io.Pipe()
+
+		go func () {
+			defer writer.Close()
+			defer newResponse.Body.Close()
+			io.Copy(writer, newResponse.Body)
+		}()
+
+		return reader
+	} else {
+		return nil
+	}
+
+
+}
+
 // Returns a Kismet Web Client ready to make REST API requests. This method will make Web API requests in order
 // to retrieve the authentication token
 func NewWebClient(url, username, password string) (KismetWebClient, error) {
-	httpClient := http.Client{}
-
 	var (
-		request *http.Request
 		authCookie http.Cookie
 	)
 
@@ -53,10 +107,9 @@ func NewWebClient(url, username, password string) (KismetWebClient, error) {
 				authCookie = *cookie // Copy :D
 			}
 		}
+		defer newResponse.Body.Close()
 	} // Don't check for this error (err) case.
 	// If the kismet cookie isn't set, we check below which ends up covering this error case
-
-	// Finalize the request. Not concerned with the error
 
 	if authCookie.Name != kismetAuthCookieName {
 		return KismetWebClient{}, KismetRequestError("Failed to authenticate to Kismet.\n" +
@@ -79,10 +132,6 @@ func NewWebClient(url, username, password string) (KismetWebClient, error) {
 
 // Tests for a valid connection. The implementation tests the Kismet authentication cookie.
 func (client *KismetWebClient) ValidConnection() bool {
-	httpClient := http.Client{}
-
-	var request *http.Request
-
 	if newRequest, err := http.NewRequest("GET", client.url + authCheckPath, strings.NewReader("")) ; err == nil {
 		request = newRequest
 		defer request.Body.Close()
