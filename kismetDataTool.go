@@ -1,18 +1,21 @@
 package main
 
 import (
-	"KismetDataTool/kismetClient"
+	"encoding/json"
 	"flag"
-	"io"
+	"io/ioutil"
+	"kismetDataTool/kismetClient"
 	"log"
 	"net/url"
 	"os"
+	"strings"
 )
 
 var (
 	kismetUrl string
 	kismetUsername string
 	kismetPassword string
+	filterSpec string
 
 	help      bool
 	debug     bool
@@ -28,6 +31,10 @@ func init() {
 		urlUsage   = "Used to identify the Kismet server"
 		usernameUsage = "The username to authenticate to Kismet with"
 		passwordUsage = "The password to authenticate to Kismet with"
+		filterUsage = "Used to set a filter for either the database or the rest api. " +
+			"See /system/tracked_fields.html for more info about filtering in rest mode. " +
+			"See the database tables for more info about filtering in database mode. " +
+			"Rest filters should be in the format of 'kismet.device.base.macaddr kismet.device.base.phyname'"
 
 		helpUsage  = "Display this help info and exit"
 		debugUsage = "Enable debug output"
@@ -45,6 +52,7 @@ func init() {
 	flag.BoolVar(&debug, "verbose", debugDefault, debugUsage)
 	flag.StringVar(&kismetUsername, "username", "", usernameUsage)
 	flag.StringVar(&kismetPassword, "password", "", passwordUsage)
+	flag.StringVar(&filterSpec, "filter", "", filterUsage)
 }
 
 func main() {
@@ -67,18 +75,19 @@ func main() {
 			return
 		}
 	}
+	defer dlog.Println("FINISH")
 
 	dlog.Println("Parsing command line options")
 	if databaseMode == restMode {
 		flag.PrintDefaults()
+		ilog.Println(databaseMode, restMode)
 		ilog.Println("Please choose either database or rest mode.")
 		return
 	}
 
 	// TODO: IMPLEMENT
 	if databaseMode {
-		ilog.Println("UNIMPLEMENTED!")
-		return
+		doDB()
 	} else { // REST mode
 		// Test the REST parameters
 		// TODO: Potentially temporary, Might prompt for creds so users don't have to clear cmd
@@ -100,10 +109,23 @@ func main() {
 			ilog.Println("Please enter a valid `http` or `https` url")
 			return
 		}
+
+		// Basic check. If they are bad filters, let kismet error out instead of us :D
+		if filterSpec == "" {
+			flag.PrintDefaults()
+			ilog.Println("Please specify filters for rest calls")
+			return
+		}
+
+		doRest()
 	}
+}
+
+func doRest() {
+	dlog.Println("Creating Kismet client")
 
 	var kClient kismetClient.KismetWebClient
-	dlog.Println("Creating Kismet client")
+
 	if newKClient, err := kismetClient.NewWebClient(kismetUrl, kismetUsername, kismetPassword) ; err == nil {
 		dlog.Println("Successfully created kismet client")
 		kClient = newKClient
@@ -116,10 +138,72 @@ func main() {
 	dlog.Println("Auth cookie:", kClient.GetCookie())
 	dlog.Println("Lets get some data!")
 
-	if reader := kClient.GetDevicesByFilter([]string {"kismet.device.base.macaddr","kismet.device.base.phyname",}) ; reader != nil {
+	filters := strings.Split(filterSpec, " ")
+
+	var jsonResponse []byte
+
+	if reader := kClient.GetDevicesByFilter(filters) ; reader != nil {
+
 		// Going to use ioutil.ReadAll() to read the output pipe into a byte slice
-		io.Copy(os.Stdout, reader)
+		if result, err := ioutil.ReadAll(reader) ; err == nil {
+			jsonResponse = result
+
+			// Now that we have sent the raw filters, we need to simplify them for matching
+			// the way kismet want's us to in it's JSON response
+			for n, val := range filters {
+				if strings.Contains(val, "/") {
+					vals := strings.Split(val, "/")
+					filters[n] = vals[len(vals) - 1]
+				}
+			}
+		} else {
+			ilog.Println("Failed to read result of rest call")
+			return
+		}
 		reader.Close()
 	}
-	ilog.Println()
+
+	// TODO: REMOVE
+	ioutil.WriteFile("log.txt", jsonResponse, 0644)
+	if json.Valid(jsonResponse) {
+		dlog.Println("Valid JSON response from /devices/summary/devices.json with filters:", filterSpec)
+		ilog.Println("Got response from Kismet")
+	} else {
+		dlog.Println("Invalid JSON response from /devices/summary/devices.json with filters:", filterSpec)
+		ilog.Println("Got invalid response from Kismet")
+		return
+	}
+
+	// Array of maps with string keys and interface{} values (GENERICS! :D)
+	var assembledJson []map[string]interface{}
+
+	if err := json.Unmarshal(jsonResponse, &assembledJson) ; err != nil {
+		dlog.Println("Decoding error: ", err)
+		ilog.Println("Failed to decode JSON response")
+		return
+	}
+
+	// TODO: Create data mapping technique (kml, csv, etc), delete what's below.
+
+	for n, jMap := range assembledJson {
+		dlog.Printf("Response: %d:\n", n)
+		for _, filter := range filters {
+
+			jVal := jMap[filter]
+			switch jVal.(type) {
+			case string:
+				dlog.Printf("\t%v: %s string\n", filter, jVal)
+			case float64:
+				dlog.Printf("\t%v: %g f64\n", filter, jVal)
+			case bool:
+				dlog.Printf("\t%v: %t bool\n", filter, jVal)
+			default:
+				dlog.Println("UNHANDLED!")
+			}
+		}
+	}
+}
+
+func doDB() {
+	ilog.Println("UNIMPLEMENTED!")
 }
