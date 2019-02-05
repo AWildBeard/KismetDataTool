@@ -3,6 +3,6 @@ package kismetClient
 import "net/http"
 
 // Helpers for the Rest Client
-func (client *KismetWebClient) GetCookie() *http.Cookie {
+func (client *KismetRestClient) GetCookie() *http.Cookie {
 	return &client.authCookie
 }

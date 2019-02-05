@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-type KismetWebClient struct {
+type KismetRestClient struct {
 	url string
 	ready bool
 	authCookie http.Cookie
@@ -35,7 +35,7 @@ const (
 )
 
 // Returns
-func (client *KismetWebClient) GetDevicesByFilter(filters []string) *io.PipeReader {
+func (client *KismetRestClient) GetDevicesByFilter(filters []string) *io.PipeReader {
 	var (
 		jsonReader io.Reader
 		jsonObj = map[string][]string{
@@ -84,7 +84,7 @@ func (client *KismetWebClient) GetDevicesByFilter(filters []string) *io.PipeRead
 
 // Returns a Kismet Web Client ready to make REST API requests. This method will make Web API requests in order
 // to retrieve the authentication token
-func NewWebClient(url, username, password string) (KismetWebClient, error) {
+func NewRestClient(url, username, password string) (KismetRestClient, error) {
 	var (
 		authCookie http.Cookie
 	)
@@ -94,7 +94,7 @@ func NewWebClient(url, username, password string) (KismetWebClient, error) {
 		request = newRequest
 		defer request.Body.Close()
 	} else { // Creating the request was not successful
-		return KismetWebClient{}, KismetRequestError(fmt.Sprintf("Failed to create request to %s.\n" +
+		return KismetRestClient{}, KismetRequestError(fmt.Sprintf("Failed to create request to %s.\n" +
 			"Perhaps you forgot to add http:// to the beginning of the url?", url))
 	}
 
@@ -112,12 +112,12 @@ func NewWebClient(url, username, password string) (KismetWebClient, error) {
 	// If the kismet cookie isn't set, we check below which ends up covering this error case
 
 	if authCookie.Name != kismetAuthCookieName {
-		return KismetWebClient{}, KismetRequestError("Failed to authenticate to Kismet.\n" +
+		return KismetRestClient{}, KismetRequestError("Failed to authenticate to Kismet.\n" +
 			"Perhaps your username/ password combination is incorrect?")
 	}
 
 	// Verify the kismet client
-	kismetClient := KismetWebClient{
+	kismetClient := KismetRestClient{
 		url,
 		true,
 		authCookie,
@@ -126,12 +126,12 @@ func NewWebClient(url, username, password string) (KismetWebClient, error) {
 	if kismetClient.ValidConnection() {
 		return kismetClient, nil
 	} else {
-		return KismetWebClient{}, KismetRequestError("Failed to validate authentication cookie.")
+		return KismetRestClient{}, KismetRequestError("Failed to validate authentication cookie.")
 	}
 }
 
 // Tests for a valid connection. The implementation tests the Kismet authentication cookie.
-func (client *KismetWebClient) ValidConnection() bool {
+func (client *KismetRestClient) ValidConnection() bool {
 	if newRequest, err := http.NewRequest("GET", client.url + authCheckPath, strings.NewReader("")) ; err == nil {
 		request = newRequest
 		defer request.Body.Close()
@@ -146,5 +146,14 @@ func (client *KismetWebClient) ValidConnection() bool {
 	}
 
 	return false
+}
+
+func (client *KismetRestClient) Finish() error {
+	client.ready = false
+	return nil
+}
+
+func (client *KismetRestClient) IsValid() bool {
+	return client.ready
 }
 

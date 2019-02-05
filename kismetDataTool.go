@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"kismetDataTool/kismetClient"
 	"log"
@@ -12,14 +13,19 @@ import (
 )
 
 var (
+	// Flags
 	kismetUrl string
-	kismetUsername string
-	kismetPassword string
+	kismetDB string
 	filterSpec string
 
 	help      bool
 	debug     bool
-	databaseMode bool
+
+	// Program vars
+	kismetUsername string
+	kismetPassword string
+
+	dbMode bool
 	restMode bool
 
 	dlog      *log.Logger
@@ -28,31 +34,30 @@ var (
 
 func init() {
 	const (
-		urlUsage   = "Used to identify the Kismet server"
-		usernameUsage = "The username to authenticate to Kismet with"
-		passwordUsage = "The password to authenticate to Kismet with"
-		filterUsage = "Used to set a filter for either the database or the rest api. " +
-			"See /system/tracked_fields.html for more info about filtering in rest mode. " +
-			"See the database tables for more info about filtering in database mode. " +
-			"Rest filters should be in the format of 'kismet.device.base.macaddr kismet.device.base.phyname'"
+		urlUsage   = "Used to identify the URL to access the Kismet REST API"
+		dbUsage = "Used to identify a local Kismet sqlite3 database file"
+		filterUsage = "This flag is used to set a filter for the Kismet REST API if the -restURL " +
+			"flag is used, **or** this flag is used to set a filter for a kismet sqlite3 database. " +
+			"When using the -restURL flag, filters must be specified space delineated in a single string. " +
+			"See /system/tracked_fields.html for a list of fields that this " +
+			"program will use to filter requests and results. " +
+			"When using the -dbFile flag, filters must be specified by their column names " +
+			"in their respective tables. A valid dbFile filter might look like the following: " +
+			"`devices/devmac devices/avg_lat` etc. All dbFile filters must specify the same table."
 
 		helpUsage  = "Display this help info and exit"
 		debugUsage = "Enable debug output"
-		dbUsage = "Set database mode"
-		restUsage = "Set REST mode"
 
-		urlDefault = "http://127.0.0.1:2501"
-		debugDefault = false
+		debugDefault = true
 	)
 
-	flag.BoolVar(&databaseMode, "db", false, dbUsage)
-	flag.BoolVar(&restMode, "rest", false, restUsage)
-	flag.StringVar(&kismetUrl, "url", urlDefault, urlUsage)
+	flag.StringVar(&kismetDB, "dbFile", "", dbUsage)
+	flag.StringVar(&kismetUrl, "restURL", "", urlUsage)
+	flag.StringVar(&filterSpec, "filter", "", filterUsage)
+
 	flag.BoolVar(&help, "help", false, helpUsage)
 	flag.BoolVar(&debug, "verbose", debugDefault, debugUsage)
-	flag.StringVar(&kismetUsername, "username", "", usernameUsage)
-	flag.StringVar(&kismetPassword, "password", "", passwordUsage)
-	flag.StringVar(&filterSpec, "filter", "", filterUsage)
+
 }
 
 func main() {
@@ -68,38 +73,31 @@ func main() {
 	if debug {
 		dlog = log.New(os.Stderr, "DEBUG: ", log.Ltime)
 	} else {
-		if writer, err := os.Open(os.DevNull) ; err == nil {
-			dlog = log.New(writer, "", 0)
-		} else {
-			ilog.Println("Critical logging failure: Can't create null output for debug output")
-			return
-		}
+		dlog = log.New(ioutil.Discard, "", 0)
 	}
+
 	defer dlog.Println("FINISH")
 
 	dlog.Println("Parsing command line options")
-	if databaseMode == restMode {
+	if kismetUrl == kismetDB {
 		flag.PrintDefaults()
-		ilog.Println(databaseMode, restMode)
 		ilog.Println("Please choose either database or rest mode.")
 		return
+	} else if kismetUrl != "" {
+		restMode = true
+	} else {
+		dbMode = true
 	}
 
-	// TODO: IMPLEMENT
-	if databaseMode {
+	if dbMode {
+		// TODO: IMPLEMENT
+
 		doDB()
 	} else { // REST mode
-		// Test the REST parameters
-		// TODO: Potentially temporary, Might prompt for creds so users don't have to clear cmd
-		//  history to remove saved history file creds
-		if kismetUsername == "" || kismetPassword == "" {
-			flag.PrintDefaults()
-			ilog.Println("You must specify a username and password!")
-			return
-		}
 
+		// Test the url and filter flags before prompting for username and password
 		if testUrl, err := url.Parse(kismetUrl) ; err == nil {
-			if !(testUrl.Scheme == "http") && !(testUrl.Scheme == "https") {
+			if !(testUrl.Scheme == "http") || !(testUrl.Scheme == "https") {
 				flag.PrintDefaults()
 				ilog.Println("Please enter a valid `http` or `https` url")
 				return
@@ -117,6 +115,26 @@ func main() {
 			return
 		}
 
+		// Get kismet username and password
+		ilog.Print("Kismet username: ")
+		if _, err := fmt.Scanf("%s", &kismetUsername) ; err != nil {
+			ilog.Println("Failed to read username")
+			return
+		}
+
+		ilog.Print("Kismet password: ")
+		if _, err := fmt.Scanf("%s", &kismetPassword) ; err != nil {
+			ilog.Println("Failed to read password")
+			return
+		}
+
+		// Test the username and password parameters
+		if kismetUsername == "" || kismetPassword == "" {
+			flag.PrintDefaults()
+			ilog.Println("You must specify a username and password!")
+			return
+		}
+
 		doRest()
 	}
 }
@@ -124,9 +142,8 @@ func main() {
 func doRest() {
 	dlog.Println("Creating Kismet client")
 
-	var kClient kismetClient.KismetWebClient
-
-	if newKClient, err := kismetClient.NewWebClient(kismetUrl, kismetUsername, kismetPassword) ; err == nil {
+	var kClient kismetClient.KismetRestClient
+	if newKClient, err := kismetClient.NewRestClient(kismetUrl, kismetUsername, kismetPassword) ; err == nil {
 		dlog.Println("Successfully created kismet client")
 		kClient = newKClient
 	} else {
@@ -165,6 +182,7 @@ func doRest() {
 
 	// TODO: REMOVE
 	ioutil.WriteFile("log.txt", jsonResponse, 0644)
+
 	if json.Valid(jsonResponse) {
 		dlog.Println("Valid JSON response from /devices/summary/devices.json with filters:", filterSpec)
 		ilog.Println("Got response from Kismet")
@@ -205,5 +223,43 @@ func doRest() {
 }
 
 func doDB() {
+	var (
+		dbClient kismetClient.KismetDBClient
+		filters []string
+	)
+
+	if newClient, err := kismetClient.NewDBClient(kismetDB) ; err == nil {
+		dbClient = newClient
+		defer dbClient.Finish()
+	}
+
+	// get teh filters
+	filters = strings.Split(filterSpec, " ")
+
+	var table string
+	columns := make([]string, 0)
+	for _, v := range filters {
+		subFilter := strings.Split(v, "/")
+		if len(subFilter) != 2 {
+			ilog.Println("Bad DB Filter!")
+			os.Exit(1)
+		}
+
+		newTable := subFilter[0]
+		columns = append(columns, subFilter[1])
+		if table == "" {
+			table = newTable
+		} else if table != newTable {
+			ilog.Println("Bad DB Filter!")
+			os.Exit(1)
+		}
+	}
+
+	if rows, err := dbClient.SelectFrom(table, columns) ; err == nil {
+		defer rows.Close()
+
+		// TODO: FINISH
+	}
+
 	ilog.Println("UNIMPLEMENTED!")
 }
