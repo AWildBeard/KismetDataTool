@@ -36,6 +36,10 @@ const (
 
 // Returns
 func (client *KismetRestClient) GetDevicesByFilter(filters []string) *io.PipeReader {
+	if !client.ready {
+		return nil
+	}
+
 	var (
 		jsonReader io.Reader
 		jsonObj = map[string][]string{

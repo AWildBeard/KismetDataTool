@@ -90,8 +90,6 @@ func main() {
 	}
 
 	if dbMode {
-		// TODO: IMPLEMENT
-
 		doDB()
 	} else { // REST mode
 
@@ -225,24 +223,21 @@ func doRest() {
 func doDB() {
 	var (
 		dbClient kismetClient.KismetDBClient
+		clientGenerator func () kismetClient.DataElement
 		filters []string
+		table string
+		columns []string
 	)
-
-	if newClient, err := kismetClient.NewDBClient(kismetDB) ; err == nil {
-		dbClient = newClient
-		defer dbClient.Finish()
-	}
 
 	// get teh filters
 	filters = strings.Split(filterSpec, " ")
 
-	var table string
-	columns := make([]string, 0)
+	columns = make([]string, 0)
 	for _, v := range filters {
 		subFilter := strings.Split(v, "/")
 		if len(subFilter) != 2 {
 			ilog.Println("Bad DB Filter!")
-			os.Exit(1)
+			return
 		}
 
 		newTable := subFilter[0]
@@ -251,15 +246,31 @@ func doDB() {
 			table = newTable
 		} else if table != newTable {
 			ilog.Println("Bad DB Filter!")
-			os.Exit(1)
+			return
 		}
 	}
 
-	if rows, err := dbClient.SelectFrom(table, columns) ; err == nil {
-		defer rows.Close()
-
-		// TODO: FINISH
+	// get teh client
+	if newClient, err := kismetClient.NewDBClient(kismetDB, table, columns) ; err == nil {
+		dbClient = newClient
+		defer dbClient.Finish() // Cleanup
+	} else {
+		ilog.Println("Failed to create a database client: ", err)
+		return
 	}
 
-	ilog.Println("UNIMPLEMENTED!")
+	// get teh data from teh client
+	if newGenerator, err := dbClient.Elements() ; err == nil {
+		clientGenerator = newGenerator
+	} else {
+		dlog.Println("Could not read data from database with filters: ", filters)
+		ilog.Println("Failed to read data from database: ", err)
+	}
+
+	// speak teh data from teh client
+	count := 0
+	for elem := clientGenerator() ; elem.HasData; elem = clientGenerator() {
+		count++
+		ilog.Printf("Got Elem %d ID: %v with coords: %v %v", count, elem.ID, elem.Lat, elem.Lon)
+	}
 }
