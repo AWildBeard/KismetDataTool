@@ -32,14 +32,14 @@ const (
 
 // Make the kismet request for the devices with their filters and return a function generator
 // that returns single device information.
-func (client *KismetRestClient) Elements() (func() DataElement, error) {
+func (client *KismetRestClient) Elements() (func() (DataElement, error), error) {
 	var (
 		// Needed to create a JSON string
 		jsonRequestObj = map[string][]string{
 			"fields": client.filters,
 		}
 		// Sentinel error return value
-		badFunc = func() DataElement { return DataElement{} }
+		badFunc = func() (DataElement, error) { return DataElement{}, KismetRestError("Failed to create generator") }
 		// Trimmed down filters to match the expected kismet response
 		responseFilters = make([]string, len(client.filters))
 		// The JSON response from kismet converted into a native go object
@@ -101,27 +101,43 @@ func (client *KismetRestClient) Elements() (func() DataElement, error) {
 
 	offset := 0
 	numDevices := len(assembledJson)
-	return func() DataElement {
+	return func() (DataElement, error) {
 		element := DataElement{}
 
 		if offset >= numDevices {
-			return element
+			return element, KismetRestError("No more devices left")
 		}
 
 		device := assembledJson[offset]
 
-		element.Lat = float64(device[responseFilters[0]].(int)) / 100000
-		element.Lon = float64(device[responseFilters[1]].(int)) / 100000
+		for i := 0 ; i < 2 ; i++ {
+			switch device[responseFilters[i]].(type) {
+			case float64:
+			default:
+				return element, KismetRestError(
+					fmt.Sprintf("Improper first element %v Please see the help page for more info.",
+						device[responseFilters[i]]))
+			}
+		}
+
+		element.Lat = float64(device[responseFilters[0]].(float64))
+		element.Lon = float64(device[responseFilters[1]].(float64))
 
 		switch id := device[responseFilters[2]]; id.(type) {
 		case string:
 			element.ID = id.(string)
 		case int:
 			element.ID = string(id.(int))
+		default:
+			return element, KismetRestError(
+				fmt.Sprint("Invalid ID field from parsed data:", device[responseFilters[2]]))
 		}
+
+		element.HasData = true
 
 		numFilters := len(responseFilters)
 		if numFilters - 3 > 0 {
+			element.extraData = true
 			extraData := make([]interface{}, numFilters - 3)
 			for n, filter := range responseFilters[3:] {
 				extraData[n] = device[filter]
@@ -129,7 +145,7 @@ func (client *KismetRestClient) Elements() (func() DataElement, error) {
 		}
 
 		offset++
-		return element
+		return element, nil
 	}, nil
 }
 

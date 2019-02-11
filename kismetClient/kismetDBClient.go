@@ -24,11 +24,11 @@ type KismetDBClient struct {
 // to retrieve single rows from the previously ran query. For example; if the user
 // is running a devices query on a Kismet DB, this would return unique elements
 // for each device in the Kismet DB
-func (client *KismetDBClient) Elements() (func() DataElement, error) {
+func (client *KismetDBClient) Elements() (func() (DataElement, error), error) {
 	numFilters := len(client.columns)
 	rowContent := make([]interface{}, numFilters)
 
-	badFunc := func () DataElement { return DataElement{} }
+	badFunc := func () (DataElement, error) { return DataElement{}, KismetDBError("Generator not Initialized") }
 
 	if err := client.runQuery() ; err == nil {
 		if columnTypes, err := client.rows.ColumnTypes(); err == nil {
@@ -48,16 +48,23 @@ func (client *KismetDBClient) Elements() (func() DataElement, error) {
 			}
 		}
 
-		return func() DataElement {
+		return func() (DataElement, error) {
 			returnElement := DataElement{}
 
 			if client.rows.Next() {
 				// Returns elements one row at a time
 				if err := client.rows.Scan(rowContent...) ; err != nil {
-					return returnElement
+					return returnElement, KismetDBError("Failed to parse database!")
 				}
 
-				returnElement.HasData = true
+				for i := 0 ; i < 2 ; i++ {
+					switch rowContent[i].(type) {
+					case *int:
+					default:
+						return returnElement, KismetDBError("Lat or Lon field not an int!")
+					}
+				}
+
 				returnElement.Lat = float64(*rowContent[0].(*int)) / 100000
 				returnElement.Lon = float64(*rowContent[1].(*int)) / 100000
 
@@ -66,7 +73,11 @@ func (client *KismetDBClient) Elements() (func() DataElement, error) {
 					returnElement.ID = *rowContent[2].(*string)
 				case *int:
 					returnElement.ID = string(*rowContent[2].(*int))
+				default:
+					return returnElement, KismetDBError("ID data from kismet not proper")
 				}
+
+				returnElement.HasData = true
 
 				var extraData []interface{}
 
@@ -75,20 +86,22 @@ func (client *KismetDBClient) Elements() (func() DataElement, error) {
 					returnElement.extraData = true
 					extraData = make([]interface{}, numData - 3)
 
+					// This is significantly more complicated than its REST alternative because we get pointer data
+					// from the DB call rather than un-referenced data. This means that we have to save it now or
+					// loose it forever down the line.
 					for n, v := range rowContent[3:] {
 						switch v.(type) { // Test type
 						case *string: // Match type
-							var x *string
-							x = v.(*string) // Cast type
-							extraData[n] = x
+							extraData[n] = *(v.(*string))
 						case *int:
-							var x *int
-							x = v.(*int)
-							extraData[n] = x
+							extraData[n] = *(v.(*int))
 						case *int64:
-							var x *int64
-							x = v.(*int64)
-							extraData[n] = x
+							extraData[n] = *(v.(*int64))
+						case *bool:
+							extraData[n] = *(v.(*bool))
+						default:
+							returnElement.HasData = false
+							return returnElement, KismetDBError("Unhandled type in extra data fields")
 						}
 					}
 				} else {
@@ -97,10 +110,9 @@ func (client *KismetDBClient) Elements() (func() DataElement, error) {
 				}
 				returnElement.data = extraData
 
-				return returnElement
-			} else {
-				return returnElement
+				return returnElement, nil
 			}
+			return returnElement, KismetDBError("No more rows left")
 		}, nil
 	} else {
 		return badFunc, KismetDBError(

@@ -51,7 +51,7 @@ func init() {
 	)
 
 	flag.StringVar(&kismetDB, "dbFile", "", dbUsage)
-	flag.StringVar(&kismetUrl, "restURL", "", urlUsage)
+	flag.StringVar(&kismetUrl, "restUrl", "", urlUsage)
 	flag.StringVar(&filterSpec, "filter", "", filterUsage)
 
 	flag.BoolVar(&help, "help", false, helpUsage)
@@ -93,14 +93,17 @@ func main() {
 	} else { // REST mode
 
 		// Test the url and filter flags before prompting for username and password
+		ilog.Println("Kismet URL:", kismetUrl)
 		if testUrl, err := url.Parse(kismetUrl) ; err == nil {
-			if !(testUrl.Scheme == "http") || !(testUrl.Scheme == "https") {
+			if !(testUrl.Scheme == "http") && !(testUrl.Scheme == "https") {
 				flag.PrintDefaults()
+				dlog.Println("URL does not appear to have http or https protocol:", testUrl.Scheme)
 				ilog.Println("Please enter a valid `http` or `https` url")
 				return
 			}
 		} else {
 			flag.PrintDefaults()
+			dlog.Println("Failed to create url:", err)
 			ilog.Println("Please enter a valid `http` or `https` url")
 			return
 		}
@@ -113,13 +116,13 @@ func main() {
 		}
 
 		// Get kismet username and password
-		ilog.Print("Kismet username: ")
+		fmt.Print("Kismet username: ")
 		if _, err := fmt.Scanf("%s", &kismetUsername) ; err != nil {
 			ilog.Println("Failed to read username")
 			return
 		}
 
-		ilog.Print("Kismet password: ")
+		fmt.Print("Kismet password: ")
 		if _, err := fmt.Scanf("%s", &kismetPassword) ; err != nil {
 			ilog.Println("Failed to read password")
 			return
@@ -171,7 +174,7 @@ func doDB() {
 	for _, v := range filters {
 		subFilter := strings.Split(v, "/")
 		if len(subFilter) != 2 {
-			ilog.Println("Bad DB Filter!")
+			ilog.Println("Bad DB Filter:", v)
 			return
 		}
 
@@ -180,7 +183,7 @@ func doDB() {
 		if table == "" {
 			table = newTable
 		} else if table != newTable {
-			ilog.Println("Bad DB Filter!")
+			ilog.Println("Bad DB Filter:", v)
 			return
 		}
 	}
@@ -199,7 +202,7 @@ func doDB() {
 
 func printElems(client kismetClient.DataLineReader) {
 	var (
-		clientGenerator func() kismetClient.DataElement
+		clientGenerator func() (kismetClient.DataElement, error)
 	)
 
 	if newGenerator, err := client.Elements() ; err == nil {
@@ -210,7 +213,7 @@ func printElems(client kismetClient.DataLineReader) {
 	}
 
 	count := 0
-	for elem := clientGenerator() ; elem.HasData; elem = clientGenerator() {
+	for elem, err := clientGenerator() ; err == nil && elem.HasData; elem, err = clientGenerator() {
 		count++
 		ilog.Printf("Got Elem %d ID: %v with coords: %v %v", count, elem.ID, elem.Lat, elem.Lon)
 	}

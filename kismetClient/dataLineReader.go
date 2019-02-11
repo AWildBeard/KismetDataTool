@@ -6,7 +6,7 @@ type DataLineReader interface {
 	// The data element may include any kind of extra data that will be stored
 	// into a generic interface{} array. The extra data will by typed to a string
 	// and stored into the description element of the KML sheet.
-	Elements() (func() DataElement, error)
+	Elements() (func() (DataElement, error), error)
 }
 
 // The actual representation of a Kismet Data Element. Designed only to support device data lookups for now.
