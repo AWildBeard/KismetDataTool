@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,12 +15,7 @@ type KismetRestClient struct {
 	url string
 	ready bool
 	authCookie http.Cookie
-}
-
-type KismetRequestError string
-
-func (err KismetRequestError) Error() string {
-	return string(err)
+	filters []string
 }
 
 var (
@@ -34,61 +30,112 @@ const (
 	kismetAuthCookieName = "KISMET"
 )
 
-// Returns
-func (client *KismetRestClient) GetDevicesByFilter(filters []string) *io.PipeReader {
-	if !client.ready {
-		return nil
-	}
-
+// Make the kismet request for the devices with their filters and return a function generator
+// that returns single device information.
+func (client *KismetRestClient) Elements() (func() DataElement, error) {
 	var (
-		jsonReader io.Reader
-		jsonObj = map[string][]string{
-			"fields": filters,
+		// Needed to create a JSON string
+		jsonRequestObj = map[string][]string{
+			"fields": client.filters,
 		}
-		jsonLen int
+		// Sentinel error return value
+		badFunc = func() DataElement { return DataElement{} }
+		// Trimmed down filters to match the expected kismet response
+		responseFilters = make([]string, len(client.filters))
+		// The JSON response from kismet converted into a native go object
+		assembledJson []map[string]interface{}
 	)
 
-	if jsonBytes, err := json.Marshal(jsonObj); err == nil {
-		// Success!
-
-		jsonLen = len(jsonBytes) + 5 // json=
-		jsonReader = io.MultiReader(strings.NewReader("json="), bytes.NewReader(jsonBytes))
-	} else {
-		return nil
+	if !client.ready {
+		return badFunc, KismetRestError("Client is not ready")
 	}
 
-	if newRequest, err := http.NewRequest("POST", client.url + customQueryPath, jsonReader) ; err == nil {
-		// Success
-		request = newRequest
-	} else {
-		return nil
+	for n, val := range client.filters {
+		if strings.Contains(val, "/") {
+			vals := strings.Split(val, "/")
+			responseFilters[n] = vals[len(vals) - 1]
+		} else {
+			responseFilters[n] = val
+		}
 	}
 
-	request.AddCookie(&client.authCookie)
-	request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Add("Charset", "utf-8")
-	request.Header.Add("Content-Length", strconv.Itoa(jsonLen))
+	// Create the JSON string
+	if jsonBytes, err := json.Marshal(jsonRequestObj); err == nil {
+		jsonLen := len(jsonBytes) + 5 // json=
+		jsonReader := io.MultiReader(strings.NewReader("json="), bytes.NewReader(jsonBytes))
 
-	if newResponse, err := httpClient.Do(request) ; err == nil {
-		reader, writer := io.Pipe()
+		// Create the HTTP Request
+		if newRequest, err := http.NewRequest("POST", client.url + customQueryPath, jsonReader) ; err == nil {
+			// Success
+			request = newRequest
 
-		go func () {
-			defer writer.Close()
-			defer newResponse.Body.Close()
-			io.Copy(writer, newResponse.Body)
-		}()
+			// Add relevant parts to the HTTP Request
+			request.AddCookie(&client.authCookie)
+			request.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Add("Charset", "utf-8")
+			request.Header.Add("Content-Length", strconv.Itoa(jsonLen))
 
-		return reader
+			// Send the request and handle the response
+			if newResponse, err := httpClient.Do(request) ; err == nil { // Returns JSON doc
+				if jsonResponse, err := ioutil.ReadAll(newResponse.Body) ; err == nil { // Read JSON doc
+					if !json.Valid(jsonResponse) { // Validate JSON doc
+						return badFunc, KismetRestError(fmt.Sprint("Got invalid JSON from Kismet with filters:", client.filters))
+					}
+
+					// Dissasemble the JSON and store the dissasembled obj in assembledJson
+					if err := json.Unmarshal(jsonResponse, &assembledJson) ; err != nil {
+						return badFunc, KismetRestError(fmt.Sprint("Failed to decode JSON response:", err))
+					}
+				}
+				newResponse.Body.Close()
+			} else {
+				return badFunc, KismetRestError(fmt.Sprint("Error handling HTTP request", err))
+			}
+			request.Body.Close()
+		} else {
+			return badFunc, KismetRestError(fmt.Sprint("Failed to create HTTP request:", err))
+		}
 	} else {
-		return nil
+		return badFunc, KismetRestError("Failed to create JSON request")
 	}
 
+	offset := 0
+	numDevices := len(assembledJson)
+	return func() DataElement {
+		element := DataElement{}
 
+		if offset >= numDevices {
+			return element
+		}
+
+		device := assembledJson[offset]
+
+		element.Lat = float64(device[responseFilters[0]].(int)) / 100000
+		element.Lon = float64(device[responseFilters[1]].(int)) / 100000
+
+		switch id := device[responseFilters[2]]; id.(type) {
+		case string:
+			element.ID = id.(string)
+		case int:
+			element.ID = string(id.(int))
+		}
+
+		numFilters := len(responseFilters)
+		if numFilters - 3 > 0 {
+			extraData := make([]interface{}, numFilters - 3)
+			for n, filter := range responseFilters[3:] {
+				extraData[n] = device[filter]
+			}
+		}
+
+		offset++
+		return element
+	}, nil
 }
 
 // Returns a Kismet Web Client ready to make REST API requests. This method will make Web API requests in order
 // to retrieve the authentication token
-func NewRestClient(url, username, password string) (KismetRestClient, error) {
+func NewRestClient(url, username, password string, filters []string) (KismetRestClient, error) {
 	var (
 		authCookie http.Cookie
 	)
@@ -98,7 +145,7 @@ func NewRestClient(url, username, password string) (KismetRestClient, error) {
 		request = newRequest
 		defer request.Body.Close()
 	} else { // Creating the request was not successful
-		return KismetRestClient{}, KismetRequestError(fmt.Sprintf("Failed to create request to %s.\n" +
+		return KismetRestClient{}, KismetRestError(fmt.Sprintf("Failed to create request to %s.\n" +
 			"Perhaps you forgot to add http:// to the beginning of the url?", url))
 	}
 
@@ -116,7 +163,7 @@ func NewRestClient(url, username, password string) (KismetRestClient, error) {
 	// If the kismet cookie isn't set, we check below which ends up covering this error case
 
 	if authCookie.Name != kismetAuthCookieName {
-		return KismetRestClient{}, KismetRequestError("Failed to authenticate to Kismet.\n" +
+		return KismetRestClient{}, KismetRestError("Failed to authenticate to Kismet.\n" +
 			"Perhaps your username/ password combination is incorrect?")
 	}
 
@@ -125,12 +172,13 @@ func NewRestClient(url, username, password string) (KismetRestClient, error) {
 		url,
 		true,
 		authCookie,
+		filters,
 	}
 
 	if kismetClient.ValidConnection() {
 		return kismetClient, nil
 	} else {
-		return KismetRestClient{}, KismetRequestError("Failed to validate authentication cookie.")
+		return KismetRestClient{}, KismetRestError("Failed to validate authentication cookie.")
 	}
 }
 
@@ -151,13 +199,3 @@ func (client *KismetRestClient) ValidConnection() bool {
 
 	return false
 }
-
-func (client *KismetRestClient) Finish() error {
-	client.ready = false
-	return nil
-}
-
-func (client *KismetRestClient) IsValid() bool {
-	return client.ready
-}
-

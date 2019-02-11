@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -138,92 +137,28 @@ func main() {
 }
 
 func doRest() {
+	var (
+		filters = strings.Split(filterSpec, " ")
+		kClient kismetClient.KismetRestClient
+	)
+
 	dlog.Println("Creating Kismet client")
 
-	var kClient kismetClient.KismetRestClient
-	if newKClient, err := kismetClient.NewRestClient(kismetUrl, kismetUsername, kismetPassword) ; err == nil {
+	if newKClient, err := kismetClient.NewRestClient(kismetUrl, kismetUsername, kismetPassword, filters) ; err == nil {
 		dlog.Println("Successfully created kismet client")
 		kClient = newKClient
+		defer kClient.Finish()
 	} else {
 		ilog.Printf("Failed to create kismet client: %v\n", err)
 		return
 	}
 
-	// TODO: Remove. Here just to test
-	dlog.Println("Auth cookie:", kClient.GetCookie())
-	dlog.Println("Lets get some data!")
-
-	filters := strings.Split(filterSpec, " ")
-
-	var jsonResponse []byte
-
-	if reader := kClient.GetDevicesByFilter(filters) ; reader != nil {
-
-		// Going to use ioutil.ReadAll() to read the output pipe into a byte slice
-		if result, err := ioutil.ReadAll(reader) ; err == nil {
-			jsonResponse = result
-
-			// Now that we have sent the raw filters, we need to simplify them for matching
-			// the way kismet want's us to in it's JSON response
-			for n, val := range filters {
-				if strings.Contains(val, "/") {
-					vals := strings.Split(val, "/")
-					filters[n] = vals[len(vals) - 1]
-				}
-			}
-		} else {
-			ilog.Println("Failed to read result of rest call")
-			return
-		}
-		reader.Close()
-	}
-
-	// TODO: REMOVE
-	ioutil.WriteFile("log.txt", jsonResponse, 0644)
-
-	if json.Valid(jsonResponse) {
-		dlog.Println("Valid JSON response from /devices/summary/devices.json with filters:", filterSpec)
-		ilog.Println("Got response from Kismet")
-	} else {
-		dlog.Println("Invalid JSON response from /devices/summary/devices.json with filters:", filterSpec)
-		ilog.Println("Got invalid response from Kismet")
-		return
-	}
-
-	// Array of maps with string keys and interface{} values (GENERICS! :D)
-	var assembledJson []map[string]interface{}
-
-	if err := json.Unmarshal(jsonResponse, &assembledJson) ; err != nil {
-		dlog.Println("Decoding error: ", err)
-		ilog.Println("Failed to decode JSON response")
-		return
-	}
-
-	// TODO: Create data mapping technique (kml, csv, etc), delete what's below.
-
-	for n, jMap := range assembledJson {
-		dlog.Printf("Response: %d:\n", n)
-		for _, filter := range filters {
-
-			jVal := jMap[filter]
-			switch jVal.(type) {
-			case string:
-				dlog.Printf("\t%v: %s string\n", filter, jVal)
-			case float64:
-				dlog.Printf("\t%v: %g f64\n", filter, jVal)
-			case bool:
-				dlog.Printf("\t%v: %t bool\n", filter, jVal)
-			default:
-				dlog.Println("UNHANDLED!")
-			}
-		}
-	}
+	printElems(&kClient)
 }
 
 func doDB() {
 	var (
 		dbClient kismetClient.KismetDBClient
-		clientGenerator func () kismetClient.DataElement
 		filters []string
 		table string
 		columns []string
@@ -259,15 +194,21 @@ func doDB() {
 		return
 	}
 
-	// get teh data from teh client
-	if newGenerator, err := dbClient.Elements() ; err == nil {
+	printElems(&dbClient) // So apparently referencing a type that implements a supertype makes it compatible with that supertype
+}
+
+func printElems(client kismetClient.DataLineReader) {
+	var (
+		clientGenerator func() kismetClient.DataElement
+	)
+
+	if newGenerator, err := client.Elements() ; err == nil {
 		clientGenerator = newGenerator
 	} else {
-		dlog.Println("Could not read data from database with filters: ", filters)
 		ilog.Println("Failed to read data from database: ", err)
+		return
 	}
 
-	// speak teh data from teh client
 	count := 0
 	for elem := clientGenerator() ; elem.HasData; elem = clientGenerator() {
 		count++
