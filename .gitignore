@@ -6,6 +6,7 @@
 !*/
 !.*/
 !.gitignore
+!.travis.yml
 
 # But these things also
 .idea/

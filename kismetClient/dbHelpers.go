@@ -13,7 +13,9 @@ func (client KismetDBClient) GetRawRows() *sql.Rows {
 }
 
 func (client *KismetDBClient) Finish() error {
-	client.ready = false
-	client.rows.Close()
+	client.Ready = false
+	if client.rows != nil {
+		client.rows.Close()
+	}
 	return client.db.Close()
 }

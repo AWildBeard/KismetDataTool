@@ -7,6 +7,7 @@ type DataLineReader interface {
 	// into a generic interface{} array. The extra data will by typed to a string
 	// and stored into the description element of the KML sheet.
 	Elements() (func() (DataElement, error), error)
+	ElementHeaders() []string
 }
 
 // The actual representation of a Kismet Data Element. Designed only to support device data lookups for now.
@@ -30,10 +31,8 @@ type DataElement struct {
 // this function will expose that extra data to the caller. The data in the []interface{} will be pointers
 // to typed data retrieved directly from the database call. By typed data I mean that it is data that has
 // been converted into the go type system.
-func (elem *DataElement) GetExtraData() (hasData bool, data []interface{}) {
-	hasData	= elem.extraData
-	data = elem.data
-	return
+func (elem *DataElement) GetExtraData() *[]interface{} {
+	return &elem.data
 }
 
 func (elem *DataElement) HasExtraData() bool {

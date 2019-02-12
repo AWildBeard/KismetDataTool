@@ -3,7 +3,7 @@ package kismetClient
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Needed as sqlite3 driver for database/sql
 	"os"
 	"strings"
 )
@@ -12,10 +12,10 @@ type KismetDBClient struct {
 	db *sql.DB
 	rows *sql.Rows
 
-	table string
-	columns []string
+	Table string
+	Columns []string
 
-	ready bool
+	Ready bool
 }
 
 // When calling Elements(), the DB Client automatically runs the prepared query
@@ -25,7 +25,7 @@ type KismetDBClient struct {
 // is running a devices query on a Kismet DB, this would return unique elements
 // for each device in the Kismet DB
 func (client *KismetDBClient) Elements() (func() (DataElement, error), error) {
-	numFilters := len(client.columns)
+	numFilters := len(client.Columns)
 	rowContent := make([]interface{}, numFilters)
 
 	badFunc := func () (DataElement, error) { return DataElement{}, KismetDBError("Generator not Initialized") }
@@ -34,7 +34,6 @@ func (client *KismetDBClient) Elements() (func() (DataElement, error), error) {
 		if columnTypes, err := client.rows.ColumnTypes(); err == nil {
 			for i, v := range columnTypes {
 				theType := v.DatabaseTypeName()
-				fmt.Printf("%v: %T\n", theType, theType)
 				switch theType {
 				case "TEXT":
 					var newVal string
@@ -121,18 +120,18 @@ func (client *KismetDBClient) Elements() (func() (DataElement, error), error) {
 }
 
 func (client *KismetDBClient) runQuery() error {
-	if !client.ready {
+	if !client.Ready {
 		return KismetDBError("DB Client is not read!")
 	}
 	var query strings.Builder
 
-	columnLen := len(client.columns)
+	columnLen := len(client.Columns)
 	query.WriteString("select ")
 	if columnLen == 0 {
-		client.ready = false
+		client.Ready = false
 		return KismetDBError("No Columns to select from the table")
 	} else {
-		for i, column := range client.columns {
+		for i, column := range client.Columns {
 			if i == columnLen - 1 {
 				query.WriteString(fmt.Sprintf("%s ", column))
 			} else {
@@ -140,8 +139,7 @@ func (client *KismetDBClient) runQuery() error {
 			}
 		}
 	}
-	query.WriteString("from " + client.table + ";")
-	fmt.Println("Query:", query.String())
+	query.WriteString("from " + client.Table + ";")
 
 	if rows, err := client.db.Query(query.String()) ; err == nil {
 		client.rows = rows
@@ -176,4 +174,8 @@ func NewDBClient(dbFile, table string, columns []string) (KismetDBClient, error)
 		columns,
 		true,
 	}, nil
+}
+
+func (client *KismetDBClient) ElementHeaders() []string {
+	return client.Columns
 }
