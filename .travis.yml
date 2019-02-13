@@ -19,7 +19,7 @@ deploy:
     secure: kbgu+erZ8YTxBzycTI2ESWEsBFOmsoOxld06OysB5sm4ygES6cxTJ2ims3IimjRm3sUh9DtGNsl3eOZ/loKobIVAI16AHqyQMa6SKFwA5oON+2kCQtWQIGxuLc/2WO+sEErCG4qV4R4Ck5wrFYEMkTGh4385V7SWs/Kqk4ZWF0Ryyde11eGihDlGZHEqZ1i9rc0QKFe+1+Uoezr9tHwhJ/AR3RFuR9XW1XkQeRn7pTHgTDOo+BGNjZx32CWaPiSLnSwQFX4KL/XIOvM8moI/OYPFIuU9byQueB5NSoMdbmQWq6dwf6Qua7bMBsXNYO1NihewS/Hi7LVDlZ8Ihk953VryBy0w3uW7OG5kkIIms1n3let+2vczaB1PjF6KYr7XRi5zbjVT703pP7iqB7qlDItuezfJkaYSd5CFjfFPgaGD37r7A/K9qZqtA2SQMhld0B5/35oQ2NM/AhZChMae6NjN10F6Zb9H/tbuboOSMCiIRn5a5vZP4TrrnNMXT9CaEnYEJiOjd+LUUtCuGImBAn3Bnb+9nS/mzH3iGhoRJVoBBNVfHRi+SSC8BpHEkI1rbEV0JvWN0jB7Tn8TIFz0CsxyVkH2SOi1usbLeawO6GycF9TYN5MLADBAgZnqyThNcisNi8l2upHpr67I542r1N8+jDqFuxAVapsYzvt3sh0=
   file_glob: true
   file: 
-  - kismetDataTool*
+  - kismetDataTool_*
   skip_cleanup: true
   on:
     tags: true
