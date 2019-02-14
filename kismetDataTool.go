@@ -27,6 +27,7 @@ var (
 	kismetUsername string
 	kismetPassword string
 
+	appendMode bool
 	dbMode bool
 	restMode bool
 
@@ -67,6 +68,7 @@ func init() {
 			"csv-like manner to stdout. The default is to write to STDOUT.\n" +
 			"The supported file formats are: csv, kml\n"
 
+		appendUsage = "Do not print headers for CSV mode. (append)\n"
 		helpUsage  = "Display this help info and exit\n"
 		debugUsage = "Enable debug output (written to STDERR)\n"
 
@@ -80,6 +82,7 @@ func init() {
 
 	flag.BoolVar(&help, "help", false, helpUsage)
 	flag.BoolVar(&debug, "verbose", debugDefault, debugUsage)
+	flag.BoolVar(&appendMode, "append", false, appendUsage)
 
 	flag.Usage = usage
 }
@@ -118,7 +121,9 @@ func main() {
 		outputWriter = os.Stdout
 		outputFunc = writeCsv
 	} else if strings.Contains(output, ".csv") {
-		if newFile, err := os.Create(output) ; err == nil {
+		var mode int
+		if appendMode { mode = os.O_APPEND } else { mode = os.O_CREATE }
+		if newFile, err := os.OpenFile(output, mode, 0666) ; err == nil {
 			outputWriter = newFile
 		} else {
 			dlog.Printf("Failed to open file %v: %v", output, err)
@@ -126,7 +131,9 @@ func main() {
 		}
 		outputFunc = writeCsv
 	} else if strings.Contains(output, ".kml") {
-		if newFile, err := os.Create(output) ; err == nil {
+		var mode int
+		if appendMode { mode = os.O_APPEND } else { mode = os.O_CREATE }
+		if newFile, err := os.OpenFile(output, mode, 0666) ; err == nil {
 			outputWriter = newFile
 		} else {
 			dlog.Printf("Failed to open file %v: %v", output, err)
@@ -288,8 +295,8 @@ func writeCsv(client kismetClient.DataLineReader) error {
 	}
 
 	// Print header
-	dlog.Println("Writing csv header")
-	{ // Open a new scope
+	if !appendMode { // Open a new scope
+		dlog.Println("Writing csv header")
 		headers := client.ElementHeaders()
 		headerLen := len(headers)
 		for n, v := range headers {
@@ -306,8 +313,8 @@ func writeCsv(client kismetClient.DataLineReader) error {
 			}
 
 		}
+		byteBuffer.WriteByte('\n') // Newline
 	}
-	byteBuffer.WriteByte('\n') // Newline
 
 	// Print elements
 	dlog.Println("Writing elements")
